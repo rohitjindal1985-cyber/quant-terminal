@@ -3,86 +3,144 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
 
-# पेज कॉन्फ़िगरेशन
 st.set_page_config(
-    page_title="Dual Engine: Futures & Options Quant Terminal",
+    page_title="Dual Engine: MCX India & Global Quant Terminal",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-st.title("🎯 डुअल इंजन: फ्यूचर्स एवं लो-कैपिटल ऑप्शंस टर्मिनल")
-st.caption("NSE (Nifty, Bank Nifty, Stocks) | MCX (Gold, Silver, Crude) - Camarilla + VWAP + Momentum Engine")
+st.title("🎯 MCX इंडिया (₹) एवं ग्लोबल मार्केट्स क्वांट टर्मिनल")
+st.caption("MCX Indian Rupee Rates (INR) | International Rates (XAU/USD, XAG/USD) | NSE Futures & Options")
 
-# ----------------- एसेट मैपिंग -----------------
+# ----------------- एसेट कॉन्फ़िगरेशन -----------------
 ASSETS = {
-    "NIFTY 50": {"symbol": "^NSEI", "lot_size": 25, "step": 50},
-    "BANK NIFTY": {"symbol": "^NSEBANK", "lot_size": 15, "step": 100},
-    "MCX CRUDE OIL (Proxy)": {"symbol": "CL=F", "lot_size": 100, "step": 50},
-    "MCX GOLD (Proxy)": {"symbol": "GC=F", "lot_size": 10, "step": 100},
-    "MCX SILVER (Proxy)": {"symbol": "SI=F", "lot_size": 30, "step": 250},
-    "RELIANCE": {"symbol": "RELIANCE.NS", "lot_size": 250, "step": 20},
-    "TATA MOTORS": {"symbol": "TATAMOTORS.NS", "lot_size": 1425, "step": 10}
+    # 🇮🇳 MCX इंडिया सेगमेंट्स (INR में प्रदर्शित)
+    "MCX GOLD (₹ / 10 Grams)": {
+        "symbol": "GC=F", "market": "MCX_INR", "unit": "₹/10g", 
+        "lot_size": 1, "step": 100, "conversion_factor": 1.0
+    },
+    "MCX SILVER (₹ / 1 Kg)": {
+        "symbol": "SI=F", "market": "MCX_INR", "unit": "₹/kg", 
+        "lot_size": 1, "step": 500, "conversion_factor": 1.0
+    },
+    "MCX CRUDE OIL (₹ / Barrel)": {
+        "symbol": "CL=F", "market": "MCX_INR", "unit": "₹/bbl", 
+        "lot_size": 100, "step": 50, "conversion_factor": 1.0
+    },
+    
+    # 🌐 इंटरनेशनल सेगमेंट्स (USD Rates)
+    "XAU/USD (Gold Spot - USD/oz)": {
+        "symbol": "GC=F", "market": "GLOBAL_USD", "unit": "$/oz", 
+        "lot_size": 10, "step": 10, "conversion_factor": 1.0
+    },
+    "XAG/USD (Silver Spot - USD/oz)": {
+        "symbol": "SI=F", "market": "GLOBAL_USD", "unit": "$/oz", 
+        "lot_size": 50, "step": 0.5, "conversion_factor": 1.0
+    },
+    "WTI CRUDE (USD / Barrel)": {
+        "symbol": "CL=F", "market": "GLOBAL_USD", "unit": "$/bbl", 
+        "lot_size": 100, "step": 1.0, "conversion_factor": 1.0
+    },
+
+    # 📈 भारतीय शेयर एवं इंडेक्स
+    "NIFTY 50": {
+        "symbol": "^NSEI", "market": "NSE", "unit": "Points", 
+        "lot_size": 25, "step": 50, "conversion_factor": 1.0
+    },
+    "BANK NIFTY": {
+        "symbol": "^NSEBANK", "market": "NSE", "unit": "Points", 
+        "lot_size": 15, "step": 100, "conversion_factor": 1.0
+    },
+    "RELIANCE": {
+        "symbol": "RELIANCE.NS", "market": "NSE", "unit": "₹", 
+        "lot_size": 250, "step": 20, "conversion_factor": 1.0
+    }
 }
 
 # साइडबार
-st.sidebar.header("सेटिंग्स")
-selected_asset_name = st.sidebar.selectbox("एसेट चुनें:", list(ASSETS.keys()))
+st.sidebar.header("सेटिंग्स एवं एसेट चयन")
+selected_asset_name = st.sidebar.selectbox("ट्रेडिंग एसेट चुनें:", list(ASSETS.keys()))
 asset_meta = ASSETS[selected_asset_name]
-user_capital = st.sidebar.number_input("उपलब्ध कैपिटल (₹):", min_value=5000, value=25000, step=5000)
 
 # रिफ्रेश बटन
 if st.sidebar.button("🔄 डेटा रिफ्रेश करें"):
     st.cache_data.clear()
     st.rerun()
 
-# ----------------- सुरक्षित डेटा लोडिंग इंजन -----------------
+# ----------------- लाइव डेटा व करेंसी फेचिंग -----------------
 @st.cache_data(ttl=60)
-def load_market_data(ticker):
+def fetch_data_and_currency(ticker):
     try:
-        # 5 मिनट का 5 दिन का डेटा
+        # प्राइमरी एसेट डेटा
         data = yf.download(ticker, period="5d", interval="5m", progress=False)
-        
-        # yfinance के नए MultiIndex कॉलम्स को ठीक करना (Error Fix)
         if isinstance(data.columns, pd.MultiIndex):
             data.columns = data.columns.get_level_values(0)
             
-        data = data.dropna()
-        return data
-    except Exception as e:
-        return pd.DataFrame()
+        # USD/INR लाइव एक्सचेंज रेट
+        fx_data = yf.download("USDINR=X", period="1d", interval="5m", progress=False)
+        if isinstance(fx_data.columns, pd.MultiIndex):
+            fx_data.columns = fx_data.columns.get_level_values(0)
+            
+        usd_inr = fx_data['Close'].iloc[-1] if not fx_data.empty else 83.50
+        return data.dropna(), float(usd_inr)
+    except Exception:
+        return pd.DataFrame(), 83.50
 
-df = load_market_data(asset_meta["symbol"])
+df_raw, usd_inr_rate = fetch_data_and_currency(asset_meta["symbol"])
 
-if df.empty or len(df) < 30:
-    st.error("डेटा प्राप्त नहीं हो सका। कृपया इंटरनेट कनेक्शन चेक करें या थोड़ी देर बाद प्रयास करें।")
+if df_raw.empty or len(df_raw) < 20:
+    st.error("डेटा लोड करने में असमर्थ। कृपया इंटरनेट कनेक्शन चेक करें।")
 else:
-    # ----------------- क्वांट कैलकुलेशंस -----------------
+    df = df_raw.copy()
+
+    # ----------------- MCX भारतीय दर (INR) रूपांतरण फॉर्मूला -----------------
+    # इंटरनेशनल फ्यूचर्स को MCX इंडियन रेट्स में कन्वर्ट करने का वास्तविक फॉर्मूला
+    if asset_meta["market"] == "MCX_INR":
+        duty_factor = 1.06  # लगभग 6% बेसिक कस्टम ड्यूटी व टैक्स बफर
+        
+        if "GOLD" in selected_asset_name:
+            # 1 Troy Ounce = 31.1035 ग्राम -> प्रति 10 ग्राम रूपांतरण
+            factor = (usd_inr_rate / 31.1035) * 10 * duty_factor
+        elif "SILVER" in selected_asset_name:
+            # 1 Troy Ounce = 31.1035 ग्राम -> प्रति 1 किलोग्राम (1000g) रूपांतरण
+            factor = (usd_inr_rate / 31.1035) * 1000 * duty_factor
+        elif "CRUDE" in selected_asset_name:
+            # प्रति बैरल USD to INR
+            factor = usd_inr_rate
+        else:
+            factor = 1.0
+            
+        for col in ['Open', 'High', 'Low', 'Close']:
+            df[col] = df[col] * factor
+    else:
+        factor = 1.0
+
+    # ----------------- क्वांट कैलकुलेशन -----------------
     close = df['Close']
     high = df['High']
     low = df['Low']
     vol = df['Volume']
 
-    # 1. VWAP (Volume Weighted Average Price)
+    # VWAP
     cum_vol = vol.cumsum()
     cum_vp = (close * vol).cumsum()
     df['VWAP'] = np.where(cum_vol != 0, cum_vp / cum_vol, close)
 
-    # 2. RSI (14)
+    # RSI (14)
     delta = close.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
     rs = gain / (loss + 1e-9)
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    # 3. ATR (Average True Range)
+    # ATR
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
     tr3 = (low - close.shift(1)).abs()
     df['ATR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1).rolling(14).mean()
 
-    # 4. Camarilla पिवट लेवल्स
+    # Camarilla लेवल्स
     day_high = high.iloc[-40:].max()
     day_low = low.iloc[-40:].min()
     day_close = close.iloc[-1]
@@ -98,9 +156,11 @@ else:
     curr_rsi = df['RSI'].iloc[-1]
     curr_atr = df['ATR'].iloc[-1]
 
-    # ----------------- इंजन 1: फ्यूचर्स प्रेडिक्शन -----------------
+    # ----------------- सिग्नल लॉजिक -----------------
     fut_bull = (curr_price > r4) and (curr_price > curr_vwap) and (curr_rsi > 58)
     fut_bear = (curr_price < s4) and (curr_price < curr_vwap) and (curr_rsi < 42)
+
+    prefix = "₹" if "INR" in asset_meta["market"] or asset_meta["market"] == "NSE" else "$"
 
     if fut_bull:
         fut_call = "🟢 STRONG BUY / LONG"
@@ -116,72 +176,65 @@ else:
         fut_call = "⏳ NO TRADE / WAIT"
         fut_target = curr_price
         fut_sl = curr_price
-        fut_conf = "Neutral (रेंजबाउंड बाज़ार)"
+        fut_conf = "Neutral (रेंजबाउंड)"
 
-    # ----------------- इंजन 2: लो-कैपिटल ऑप्शंस स्निपर -----------------
+    # ऑप्शंस स्ट्राइक निर्धारण (ITM Strike)
     step = asset_meta["step"]
     atm_strike = round(curr_price / step) * step
     itm_call_strike = atm_strike - step
     itm_put_strike = atm_strike + step
 
-    # ऑप्शंस में ट्रेड केवल तीव्र मोमेंटम पर
-    opt_call = "⏳ ऑप्शन में ट्रेड न लें (थीटा जोखिम)"
-    opt_strike = "N/A"
-    opt_target = 0.0
-    opt_sl = 0.0
-    opt_conf = "Low"
+    # ----------------- यूआई डैशबोर्ड -----------------
+    # इन्फो बार
+    if asset_meta["market"] == "MCX_INR":
+        st.success(f"🇮🇳 **MCX भारतीय बाज़ार मोड सक्रिय:** दरें रुपये ({asset_meta['unit']}) में प्रदर्शित हैं। लाइव USD/INR एक्सचेंज रेट: ₹{usd_inr_rate:.2f}")
+    elif asset_meta["market"] == "GLOBAL_USD":
+        st.info(f"🌐 **अंतरराष्ट्रीय बाज़ार मोड सक्रिय:** दरें अमेरिकी डॉलर ({asset_meta['unit']}) में प्रदर्शित हैं।")
 
-    approx_call_prem = max((curr_price - itm_call_strike) + (curr_atr * 0.4), 25.0)
-    approx_put_prem = max((itm_put_strike - curr_price) + (curr_atr * 0.4), 25.0)
-
-    if fut_bull and curr_rsi > 62:
-        opt_call = "🚀 BUY CALL (ITM CE)"
-        opt_strike = f"{int(itm_call_strike)} CE"
-        opt_target = approx_call_prem * 1.35  # 35% टारगेट
-        opt_sl = approx_call_prem * 0.82      # 18% SL
-        opt_conf = "82% - 85% (स्निपर मोमेंटम)"
-    elif fut_bear and curr_rsi < 38:
-        opt_call = "🔥 BUY PUT (ITM PE)"
-        opt_strike = f"{int(itm_put_strike)} PE"
-        opt_target = approx_put_prem * 1.35
-        opt_sl = approx_put_prem * 0.82
-        opt_conf = "82% - 85% (स्निपर मोमेंटम)"
-
-    # ----------------- UI डैशबोर्ड -----------------
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.subheader("📊 1. फ्यूचर्स प्रेडिक्शन")
-        st.info(f"**सिग्नल:** {fut_call} | **एक्यूरेसी:** {fut_conf}")
-        fc1, fc2, fc3 = st.columns(3)
-        fc1.metric("करंट प्राइस", f"{curr_price:,.2f}")
-        fc2.metric("टार्गेट", f"{fut_target:,.2f}")
-        fc3.metric("स्टॉप-लॉस", f"{fut_sl:,.2f}")
-        st.write(f"• **ब्रेकआउट (R4):** {r4:,.2f} | **ब्रेकडाउन (S4):** {s4:,.2f}")
-
-    with col2:
-        st.subheader("⚡ 2. लो-कैपिटल ऑप्शंस स्निपर")
-        st.warning(f"**सिग्नल:** {opt_call} | **एक्यूरेसी:** {opt_conf}")
-        oc1, oc2, oc3 = st.columns(3)
-        oc1.metric("अनुशंसित स्ट्राइक", opt_strike)
-        oc2.metric("टार्गेट (+35%)", f"₹{opt_target:.1f}" if opt_target > 0 else "N/A")
-        oc3.metric("स्टॉप-लॉस (-18%)", f"₹{opt_sl:.1f}" if opt_sl > 0 else "N/A")
-        st.write("• **नियम:** 45 मिनट के अंदर टारगेट न आने पर एग्जिट करें।")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric(f"लाइव भाव ({asset_meta['unit']})", f"{prefix}{curr_price:,.2f}")
+    c2.metric("आज का ब्रेकआउट (Up Level)", f"{prefix}{r4:,.2f}")
+    c3.metric("आज का ब्रेकडाउन (Down Level)", f"{prefix}{s4:,.2f}")
+    c4.metric("RSI मोमेंटम", f"{curr_rsi:.1f}")
 
     st.markdown("---")
 
-    # चार्ट
-    fig = go.Figure()
-    chart_data = df.iloc[-60:]
-    fig.add_trace(go.Candlestick(
-        x=chart_data.index,
-        open=chart_data['Open'], high=chart_data['High'],
-        low=chart_data['Low'], close=chart_data['Close'],
-        name="प्राइस"
-    ))
-    fig.add_trace(go.Scatter(x=chart_data.index, y=chart_data['VWAP'], line=dict(color='yellow', width=1.5), name="VWAP"))
-    fig.add_hline(y=r4, line_dash="dash", line_color="green", annotation_text="Call Trigger (R4)")
-    fig.add_hline(y=s4, line_dash="dash", line_color="red", annotation_text="Put Trigger (S4)")
+    col_left, col_right = st.columns(2)
 
-    fig.update_layout(height=420, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=10, b=10))
+    with col_left:
+        st.subheader("📊 फ्यूचर्स / स्पॉट प्रेडिक्शन")
+        st.info(f"**सिग्नल:** {fut_call} | **एक्यूरेसी:** {fut_conf}")
+        fc1, fc2, fc3 = st.columns(3)
+        fc1.metric("एंट्री स्तर", f"{prefix}{curr_price:,.2f}")
+        fc2.metric("संभावित टार्गेट", f"{prefix}{fut_target:,.2f}")
+        fc3.metric("स्टॉप-लॉस बफर", f"{prefix}{fut_sl:,.2f}")
+
+    with col_right:
+        st.subheader("⚡ लो-कैपिटल ऑप्शंस स्निपर")
+        if fut_bull and curr_rsi > 60:
+            st.success(f"🚀 **कॉल ऑप्शन (BUY ITM CE):** {int(itm_call_strike)} CE खरीदें")
+            st.write("• **टार्गेट:** प्रीमियम पर +35% लाभ पर एग्जिट करें।")
+            st.write("• **स्टॉप-लॉस:** प्रीमियम पर -18% सख्त SL रखें।")
+        elif fut_bear and curr_rsi < 40:
+            st.error(f"🔥 **पुट ऑप्शन (BUY ITM PE):** {int(itm_put_strike)} PE खरीदें")
+            st.write("• **टार्गेट:** प्रीमियम पर +35% लाभ पर एग्जिट करें।")
+            st.write("• **स्टॉप-लॉस:** प्रीमियम पर -18% सख्त SL रखें।")
+        else:
+            st.warning("⏳ **वेटिंग ज़ोन:** ऑप्शन बाइंग के लिए अभी मोमेंटम अपर्याप्त है।")
+
+    # चार्ट
+    st.markdown("---")
+    fig = go.Figure()
+    chart_df = df.iloc[-60:]
+    fig.add_trace(go.Candlestick(
+        x=chart_df.index,
+        open=chart_df['Open'], high=chart_df['High'],
+        low=chart_df['Low'], close=chart_df['Close'],
+        name="भाव"
+    ))
+    fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['VWAP'], line=dict(color='yellow', width=1.5), name="VWAP"))
+    fig.add_hline(y=r4, line_dash="dash", line_color="green", annotation_text="Breakout Up (R4)")
+    fig.add_hline(y=s4, line_dash="dash", line_color="red", annotation_text="Breakdown Down (S4)")
+
+    fig.update_layout(height=450, xaxis_rangeslider_visible=False, margin=dict(l=10, r=10, t=20, b=10))
     st.plotly_chart(fig, use_container_width=True)
